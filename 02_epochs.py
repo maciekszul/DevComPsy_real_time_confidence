@@ -85,7 +85,7 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     filename = "_".join([trial_label] + [filter_name] + (fif_path.stem.split("_")[:-1]) + ["epo.fif"])
     epoch_path = Path(fif_path.parent).joinpath(filename)
     print(epoch_path)
-    # epochs.save(epoch_path, fmt="single", overwrite=True)
+    epochs.save(epoch_path, fmt="single", overwrite=True)
 
 
 if __name__ == '__main__':
