@@ -55,9 +55,9 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     """
 
     raw = read_raw_fif(fif_path, preload=True)
-    filter_name = ""
+    filter_name = "nf"
     if filter != (None, None):
-        filter_name = f"{filter[0]}-{filter[1]}_"
+        filter_name = f"{filter[0]}-{filter[1]}"
         raw = raw.filter(*filter)
     ica = read_ica(ica_path)
 
@@ -82,10 +82,10 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     )
 
     trial_label = trial_type.replace("_", "-")
-    filename = "_".join([trial_label] + fif_path.stem.split("_")[:-1] + ["epo.fif"])
+    filename = "_".join([trial_label] + [filter_name] + (fif_path.stem.split("_")[:-1]) + ["epo.fif"])
     epoch_path = Path(fif_path.parent).joinpath(filename)
-
-    epochs.save(epoch_path, fmt="single")
+    print(epoch_path)
+    # epochs.save(epoch_path, fmt="single", overwrite=True)
 
 
 if __name__ == '__main__':
