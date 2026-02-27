@@ -50,8 +50,15 @@ def process_ds(ds, trigger_mapping, proc_path):
     raw = read_raw_ctf(ds, preload=True, clean_names=True, verbose=False)
 
     if "01.ds" in ds.parts[-1]:
-        raw = raw.pick(picks=["UDIO001", "UADC009", "UADC010"])
-        raw.save(raw_output, fmt="single", overwrite=True, verbose=False)
+        gripper_channels = ["UADC009", "UADC010"]
+        raw = raw.pick(picks=gripper_channels)
+        meg_calibration = {}
+        for ch_name in ["UADC009", "UADC010"]:
+            data = raw[ch_name][0]
+            meg_calibration[ch_name] = [np.median(data).astype(float), np.max(data).astype(float)]
+        filename = f"realtime_sub-{subject}_meg-calibration.json"
+        calib_output = subject_path.joinpath(filename)
+        utils.save_dict_as_json(calib_output, meg_calibration)
 
     else:
         raw = raw.apply_gradient_compensation(3)

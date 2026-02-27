@@ -39,12 +39,13 @@ all_files = list(zip(all_fif_files, all_ica_files))
 
 epochs_options = {
     "whole_trial": ["dots_onset", -1.5, 4.1, 0],
+    "extra_trial": ["dots_onset", -1.5, 4.6, 0],
     "dots": ["dots_onset", -0.25, 0.6, 0],
     "response": ["response_onset", -0.25, 3.5, -20],
 }
 
 # function that can also be accessed by importing this file
-def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(None, None), decim=0, limited_channels=True):
+def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(None, None), decim=0, limited_channels=True, hilbert=False):
     """
     Parameters
     ----------
@@ -55,13 +56,15 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     """
 
     raw = read_raw_fif(fif_path, preload=True)
+    ica = read_ica(ica_path)
+    raw = ica.apply(raw)
+
     filter_name = "nf"
     if filter != (None, None):
         filter_name = f"{filter[0]}-{filter[1]}"
-        raw = raw.filter(*filter)
-    ica = read_ica(ica_path)
-
-    raw = ica.apply(raw)
+        raw = raw.filter(*filter, picks="mag")
+        if hilbert:
+            raw = raw.apply_hilbert(picks="mag", envelope=True)
 
     if limited_channels:
         mags = [ix for ix, ch_t in enumerate(raw.get_channel_types()) if ch_t == "mag"]
@@ -78,13 +81,12 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     events, event_ids = events_from_annotations(raw, event_id=events_selection)
 
     epochs = Epochs(
-        raw, events, event_ids, tmin, tmax, decim=decim,
+        raw, events, event_ids, tmin, tmax, decim=decim, baseline=None
     )
 
     trial_label = trial_type.replace("_", "-")
     filename = "_".join([trial_label] + [filter_name] + (fif_path.stem.split("_")[:-1]) + ["epo.fif"])
     epoch_path = Path(fif_path.parent).joinpath(filename)
-    print(epoch_path)
     epochs.save(epoch_path, fmt="single", overwrite=True)
 
 
@@ -101,10 +103,18 @@ if __name__ == '__main__':
     print(to_print)
 
     fif_path, ica_path = all_files[index]
+    
+    # epochs_maker(
+    #     fif_path, ica_path, epochs_options["whole_trial"], trigger_mapping,
+    #     filter=(None, None), decim=2, limited_channels=True, hilbert=True
+    # )
+
     epochs_maker(
-        fif_path, ica_path, epochs_options["whole_trial"], trigger_mapping,
-        filter=(None, None), decim=2, limited_channels=True
+        fif_path, ica_path, epochs_options["extra_trial"], trigger_mapping,
+        filter=(12, 31), decim=4, limited_channels=True, hilbert=True
     )
+
+
 
     status = "END"
     time_elapsed =  np.round((time.time() - start_time)/60, 2)
