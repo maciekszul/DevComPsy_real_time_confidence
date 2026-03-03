@@ -45,7 +45,7 @@ epochs_options = {
 }
 
 # function that can also be accessed by importing this file
-def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(None, None), decim=0, limited_channels=True, hilbert=False):
+def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(None, None), filter_name=None, decim=1, limited_channels=True, hilbert=False):
     """
     Parameters
     ----------
@@ -59,9 +59,9 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     ica = read_ica(ica_path)
     raw = ica.apply(raw)
 
-    filter_name = "nf"
+    fil_name = "nf"
     if filter != (None, None):
-        filter_name = f"{filter[0]}-{filter[1]}"
+        fil_name = f"{filter[0]}-{filter[1]}"
         raw = raw.filter(*filter, picks="mag")
         if hilbert:
             raw = raw.apply_hilbert(picks="mag", envelope=True)
@@ -85,7 +85,9 @@ def epochs_maker(fif_path, ica_path, epoch_settings, trigger_mapping, filter=(No
     )
 
     trial_label = trial_type.replace("_", "-")
-    filename = "_".join([trial_label] + [filter_name] + (fif_path.stem.split("_")[:-1]) + ["epo.fif"])
+    if filter_name != None:
+        fil_name = filter_name
+    filename = "_".join([trial_label] + [fil_name] + (fif_path.stem.split("_")[:-1]) + ["epo.fif"])
     epoch_path = Path(fif_path.parent).joinpath(filename)
     epochs.save(epoch_path, fmt="single", overwrite=True)
 
@@ -104,15 +106,15 @@ if __name__ == '__main__':
 
     fif_path, ica_path = all_files[index]
     
-    # epochs_maker(
-    #     fif_path, ica_path, epochs_options["whole_trial"], trigger_mapping,
-    #     filter=(None, None), decim=2, limited_channels=True, hilbert=True
-    # )
-
     epochs_maker(
         fif_path, ica_path, epochs_options["extra_trial"], trigger_mapping,
-        filter=(12, 31), decim=4, limited_channels=True, hilbert=True
+        filter=(None, None), filter_name="long-epoch", decim=1, limited_channels=True, hilbert=True
     )
+
+    # epochs_maker(
+    #     fif_path, ica_path, epochs_options["extra_trial"], trigger_mapping,
+    #     filter=(13, 30), filter_name="13-30-hilbert-env-decim-1", decim=1, limited_channels=True, hilbert=True
+    # )
 
 
 

@@ -1,10 +1,11 @@
 import json
+import numpy as np
 import matplotlib.pylab as plt
 from pathlib import Path
 from mne.io import read_raw_ctf
 from mne.channels import read_layout
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-
+from tools.superlet import superlet, scale_from_period
 
 
 def colorbar(mappable, label):
@@ -191,3 +192,29 @@ def find_missing_channels(raw, layout="CTF275", ch_name_string="M"):
     missing_chan_ix = lay_full.pick(picks=missing_chan).ids
 
     return missing_chan, missing_chan_ix
+
+
+def superlet_tf(signal, sfreq, num="nyquist", max_freq=120):
+    if num == "nyquist":
+        num = int(sfreq/2)
+    foi = np.linspace(1, max_freq, num=num)
+    scales = scale_from_period(1/foi)
+    spec = superlet(
+        signal,
+        samplerate=sfreq,
+        scales=scales,
+        order_max=40,
+        order_min=1,
+        c_1=4,
+        adaptive=True
+    )
+    return np.single(np.abs(spec))
+
+
+def many_is_in(multiple, target):
+    check_ = []
+    for i in multiple:
+        check_.append(i in target)
+    return any(check_)
+
+
