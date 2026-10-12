@@ -18,7 +18,7 @@ except:
     raise IndexError("no range of files")
 
 
-def job_to_do(index, path, json_file):
+def job_to_do(index, path):
     sp.call([
         "python",
         path,

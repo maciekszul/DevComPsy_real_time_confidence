@@ -1,3 +1,4 @@
+import pickle
 import json
 import numpy as np
 import matplotlib.pylab as plt
@@ -6,6 +7,20 @@ from mne.io import read_raw_ctf
 from mne.channels import read_layout
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tools.superlet import superlet, scale_from_period
+
+
+
+def save_pickle(obj, filename):
+    """Save (pickle) an object to a file."""
+    with open(filename, 'wb') as f:
+        pickle.dump(obj, f)
+
+
+def load_pickle(filename):
+    """Load (unpickle) an object from a file."""
+    with open(filename, 'rb') as f:
+        return pickle.load(f)
+
 
 
 def colorbar(mappable, label):

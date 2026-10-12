@@ -21,7 +21,7 @@ beh_path = dataset_path.joinpath("BEH")
 
 # specific file search and selection
 all_fif_files = utils.get_files(proc_path, "*.fif", strings=["realtime", "raw.fif"], depth="all")
-all_fif_files = [i for i in all_fif_files if "calibration" not in i.stem]
+all_fif_files = [i for i in all_fif_files if "ses_0" not in i.stem]
 all_ica_files = utils.get_files(proc_path, "*.fif", strings=["realtime", "ica.fif"], depth="all")
 all_fif_files.sort()
 all_ica_files.sort()
@@ -35,7 +35,7 @@ def ica_check(fif_path, ica_path):
     ica = read_ica(ica_path)
 
     ica.plot_components()
-    ica.plot_sources(raw, block=True, theme="dark")
+    ica.plot_sources(raw.pick(picks="mag"), block=True, theme="dark")
 
     print(fif_path.name, "excluded comps: ", ica.exclude)
 

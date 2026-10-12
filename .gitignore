@@ -3,6 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 DEV/
+poster_inout/
+output/
 # C extensions
 *.so
 *.ipynb

@@ -23,40 +23,44 @@ settings = utils.load_json("settings.json")
 trigger_mapping = utils.load_json("trigger_mapping.json")
 trigger_mapping = {int(i): trigger_mapping[i] for i in trigger_mapping.keys()}
 dataset_path = Path(settings["dataset_path"])
-raw_path = dataset_path.joinpath("MEG", "raw")
+exclude_sub = settings["exclude_sub"]
+
+raw_path = dataset_path.joinpath("MEG", "RAW")
 proc_path = dataset_path.joinpath("MEG", "processed")
 beh_path = dataset_path.joinpath("BEH")
 
 # specific file search and selection
 all_files = utils.get_directories(raw_path, depth="all")
 all_files = [i for i in all_files if "realtime" in i.parts[-1]]
+all_files = [i for i in all_files if not utils.many_is_in(exclude_sub, i.parts[-2])]
 
 # function that can also be accessed by importing this file
-def process_ds(ds, trigger_mapping, proc_path):
+def process_ds(ds, trigger_mapping, proc_path, block_type=0):
 
     subject = ds.stem.split("_")[0]
-    subject_path = utils.make_directory(proc_path, f"sub-{subject}")
+    subject_path = utils.make_directory(proc_path, f"{subject}")
 
-    if "01.ds" in ds.parts[-1]:
-        block_type = "calibration"
+    if block_type == "calibration":
+        block_name = "calibration"
+    elif block_type == "empty_room":
+        block_name = "empty_room"
     else:
-        block = int(ds.parts[-1].split("_")[-1].split(".")[0]) - 2
-        block_type = str(block).zfill(3)
-    filename = f"realtime_sub-{subject}_block-{block_type}_raw.fif"
+        block_name = str(block_type).zfill(3)
+    filename = f"realtime_{subject}_block-{block_name}_raw.fif"
     raw_output = subject_path.joinpath(filename)
-    filename = f"realtime_sub-{subject}_block-{block_type}_ica.fif"
+    filename = f"realtime_{subject}_block-{block_name}_ica.fif"
     ica_output = subject_path.joinpath(filename)
     
     raw = read_raw_ctf(ds, preload=True, clean_names=True, verbose=False)
 
-    if "01.ds" in ds.parts[-1]:
+    if block_type == "calibration":
         gripper_channels = ["UADC009", "UADC010"]
         raw = raw.pick(picks=gripper_channels)
         meg_calibration = {}
         for ch_name in ["UADC009", "UADC010"]:
             data = raw[ch_name][0]
             meg_calibration[ch_name] = [np.median(data).astype(float), np.max(data).astype(float)]
-        filename = f"realtime_sub-{subject}_meg-calibration.json"
+        filename = f"realtime_{subject}_meg-calibration.json"
         calib_output = subject_path.joinpath(filename)
         utils.save_dict_as_json(calib_output, meg_calibration)
 
@@ -71,7 +75,13 @@ def process_ds(ds, trigger_mapping, proc_path):
         }
 
         raw = raw.set_channel_types(set_ch)
-        events = find_events(raw, "UDIO001")
+        events = find_events(raw, "UDIO001", min_duration=0.003)
+
+        print(events)
+
+        if block_type == "empty_room" or block_type == "calibration":
+            raw.save(raw_output)
+            return block_name
 
         # zapline
 
@@ -129,14 +139,22 @@ if __name__ == '__main__':
         raise IndexError("no file index")
     
     ds = all_files[index]
+    og_block = int(ds.parts[-1].split(".")[0].split("_")[-1])
+    block = copy(og_block)
+    if og_block == 1:
+        block = "calibration"
+    else:
+        block = og_block - 2
     
     start_time = time.time()
 
     status = "START"
     to_print = f"{status} File:{str(index+1).zfill(3)}/{len(all_files)}"
     print(to_print)
+
+    print(og_block, block)
     
-    process_ds(ds, trigger_mapping, proc_path)
+    process_ds(ds, trigger_mapping, proc_path, block_type=block)
 
     status = "END"
     time_elapsed =  np.round((time.time() - start_time)/60, 2)

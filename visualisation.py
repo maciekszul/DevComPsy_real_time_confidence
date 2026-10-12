@@ -15,7 +15,7 @@ def print_results(all_blocks, print=None):
         'capprops': {'color': 'gray', 'linewidth': 0.5}
     }
 
-    colours = ["orange", "magenta"]
+    colours = ["#9b5de5", "#f15bb5"]
     x = np.linspace(-0.2, 1.2, num=500)
     f, ax = plt.subplots(1,2, figsize=(10, 5))
     for ix, cond in enumerate(all_blocks.counterfactual_label.unique()):
@@ -36,7 +36,7 @@ def print_results(all_blocks, print=None):
         ax[ix].scatter(coherence, prob_correct, s=50, color=colours[ix], label="Data", lw=1, edgecolors="black")
         wh = PsychometricCurve(model='wh', guess_rate_lims=[0.0, 0.000001]).fit(coherence, prob_correct)
         curve = wh.predict(x)
-        ax[ix].plot(x, curve, label=f"Curve fit", c=colours[ix])
+        ax[ix].plot(x, curve, label=f"Curve fit", c=colours[ix], lw=5, alpha=0.5)
         ax[ix].set_title(cond)
         ax2 = ax[ix].twinx()
         ax2.set_ylim(-10, 110)
@@ -76,7 +76,7 @@ def print_results(all_blocks, print=None):
 
         ax2.legend(handles=custom_lines, loc=8, fontsize="xx-small")
 
-    f.suptitle(f"subject: {all_blocks.subject.unique().tolist()[0]}, 0.03 low level reversed")
+    f.suptitle(f"subject: {all_blocks.subject.unique().tolist()[0]}")
     plt.tight_layout()
     if print != None:
         f.savefig(print)
