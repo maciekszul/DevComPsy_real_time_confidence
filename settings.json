@@ -1,4 +1,4 @@
 {
     "dataset_path": "/home/maciek/data/counterfactual_dots",
-    "exclude_sub": ["105", "108", "103", "118"]
+    "exclude_sub": ["105", "108", "103"]
 }

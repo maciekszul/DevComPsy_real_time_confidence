@@ -116,16 +116,6 @@ if __name__ == '__main__':
         head_motion_corr=True, decim=3
     )
 
-    # epoch_type = "full_trial"
-    # trial_label = "full-beta-filtered"
-    # filter = (3, None)
-    # epochs_maker(
-    #     fif_path, ica_path, epochs_options[epoch_type],
-    #     trigger_mapping, trial_label=trial_label, filter=filter,
-    #     head_motion_corr=True, decim=3
-    # )
-
-
     status = "END"
     time_elapsed =  np.round((time.time() - start_time)/60, 2)
     to_print = f"{status} File:{str(index+1).zfill(3)}/{len(all_files)} Time elapsed: {time_elapsed} min"

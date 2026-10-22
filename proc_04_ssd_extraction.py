@@ -42,12 +42,13 @@ def concat_epoch_data(subject):
     data = [read_epochs(i) for i in subject_fifs]
     channels = [data[0].info.ch_names[ix] for ix, typ in enumerate(data[0].info.get_channel_types()) if typ == "mag"]
     data = concatenate_epochs(data, add_offset=True, on_mismatch="ignore", verbose=False)
+    data.crop(tmin=0.6, tmax=None)
     data = data.pick(channels)
     info = data.info
     data = data.get_data(picks=channels)
     return data, info, subject_fifs[0]
 
-def raw_data_block(subject, block):
+def raw_data_block(subject, block, resample=120):
     subject_raws = [i for i in raw_files if subject in i.stem]
     subject_raws.sort()
     raw_file = subject_raws[block]
@@ -57,7 +58,7 @@ def raw_data_block(subject, block):
     channels = [raw.info.ch_names[ix] for ix, typ in enumerate(raw.info.get_channel_types()) if typ == "mag"]
     raw = ica.apply(raw)
     raw = raw.pick(channels)
-    raw = raw.resample(120)
+    raw = raw.resample(resample)
     info = raw.info
     raw = raw.get_data()
     return raw, info, raw_file
@@ -103,15 +104,24 @@ if __name__ == '__main__':
 
     subject = subjects[index]
 
-    freqs2ssd = {
-        "alpha": [[8, 12], [7,13]], # [target, noise] frequency
-        # "beta": [[13, 30], [12, 31]]
-    }
+    # freqs2ssd = {
+    #     "alpha": [[8, 12], [7,13]], # [target, noise] frequency
+    #     # "beta": [[13, 30], [12, 31]]
+    # }
 
-    for i in range(4):
-        data, info, path = raw_data_block(subject, i)
-        block = f"block-{str(i).zfill(3)}"
-        do_the_SSD(data, info, path, freqs2ssd, name=block)
+    # for i in range(4):
+    #     data, info, path = raw_data_block(subject, i, resample=120)
+    #     block = f"block-{str(i).zfill(3)}"
+    #     do_the_SSD(data, info, path, freqs2ssd, name=block)
+
+
+    freqs2ssd = {
+            # "alpha": [[8, 12], [7,13]], # [target, noise] frequency
+            "beta": [[13, 30], [12, 31]]
+        }
+
+    data, info, path = concat_epoch_data(subject)
+    do_the_SSD(data, info, path, freqs2ssd, name="epochs")
 
     status = f"END: {subject}"
     time_elapsed =  np.round((time.time() - start_time)/60, 2)

@@ -11,11 +11,18 @@ dewar (device) coordinates as separate channels:
 (mapping per mne.chpi.extract_chpi_locs_ctf and FieldTrip ft_headmovement.m;
 units are metres once MNE/FieldTrip calibration has been applied).
 
+It also hosts the tSSS/MaxFilter side of head motion, which deals with the
+same problem by a different route: instead of removing motion-correlated
+variance after the fact, SSS re-renders every sample as if the head had been
+at one fixed position.
+
 Main entry points
 -----------------
 fiducials_to_6dof : (nasion, lpa, rpa) time series -> (n_times, 6) motion
 raw_to_6dof       : appends the motion to an MNE Raw as misc channels
 regress_head_motion : regresses those 6 confounds out of the MEG sensors
+apply_tsss        : tSSS + movement compensation of a continuous CTF Raw
+ctf_head_positions : HLC channels -> the head_pos array maxwell_filter wants
 """
 
 import numpy as np
@@ -172,11 +179,6 @@ def _relative_6dof(origin, rot, o_ref, r_ref, in_ref_frame, rotvec, out):
                 out[i, 3] = np.arctan2(r21, r11)
                 out[i, 4] = np.arcsin(sy)
                 out[i, 5] = 0.0
-
-
-# ---------------------------------------------------------------------------
-# public API
-# ---------------------------------------------------------------------------
 
 
 def fiducials_to_6dof(
@@ -496,6 +498,320 @@ def regress_head_motion(
         data[:] = y.reshape(n_ep, n_t, n_sel).transpose(0, 2, 1)
     epochs._data[:, sel] = data
     return epochs
+
+
+# ---------------------------------------------------------------------------
+# tSSS / MaxFilter
+# ---------------------------------------------------------------------------
+
+#: Expansion origin / movement-compensation destination in head coordinates.
+#: 4 cm above the fiducial midpoint is the usual stand-in when the recording
+#: carries no digitised head shape to fit a sphere to.
+MAXFILTER_ORIGIN = (0.0, 0.0, 0.04)
+
+
+def cola_st_duration(sfreq, target=10.0, span=1.0):
+    """Nearest tSSS buffer duration whose sample count is COLA-valid.
+
+    ``mne.preprocessing.maxwell_filter(..., st_overlap=True)`` (the default)
+    runs the temporal projection through a 50 % overlapping Hann window and
+    refuses to start unless that window satisfies the constant-overlap-add
+    condition, which here means an even number of samples.  The CTF sampling
+    rate of 585.9375 Hz puts the conventional 10 s buffer at 5859 samples --
+    odd -- so ``st_duration=10.`` raises before any filtering happens.  Nudging
+    the buffer by a couple of milliseconds fixes it.
+
+    Parameters
+    ----------
+    sfreq : float
+        Sampling frequency of the recording.
+    target : float
+        Buffer length to aim for, in seconds.  10 s is the MaxFilter default
+        and the shortest buffer that is generally considered safe: shorter
+        buffers raise the chance that brain signal correlates with the
+        external subspace and gets projected out.
+    span : float
+        Half-width of the search window around `target`, in seconds.
+
+    Returns
+    -------
+    st_duration : float
+        Buffer length in seconds, within `span` of `target`.
+    """
+    from scipy.signal import check_COLA, windows
+
+    sfreq = float(sfreq)
+    lo = max(2, int(np.floor((target - span) * sfreq)))
+    hi = int(np.ceil((target + span) * sfreq))
+    best = None
+    for n in range(lo, hi + 1):
+        if n % 2:  # hann + 50 % overlap needs n // 2 == n / 2
+            continue
+        if not check_COLA(windows.hann(n, sym=False), n, n // 2):
+            continue
+        if best is None or abs(n - target * sfreq) < abs(best - target * sfreq):
+            best = n
+    if best is None:
+        raise ValueError(
+            f"no COLA-valid tSSS buffer within {span} s of {target} s at {sfreq} Hz"
+        )
+    return best / sfreq
+
+
+def maxwell_origin(info, fallback=MAXFILTER_ORIGIN, verbose=False):
+    """Sphere origin for the SSS expansion, in head coordinates.
+
+    Falls back to `fallback` when the recording has no digitised head shape --
+    CTF datasets saved without a Polhemus scan only carry the three fiducials,
+    and :func:`mne.bem.fit_sphere_to_headshape` needs at least four points.
+    """
+    from mne.bem import fit_sphere_to_headshape
+
+    try:
+        _, origin, _ = fit_sphere_to_headshape(info, units="m", verbose=verbose)
+    except Exception:
+        origin = fallback
+    return tuple(float(i) for i in origin)
+
+
+def ctf_head_positions(raw, decim_hz=0.2, verbose=False):
+    """Continuous head position from the CTF HLC channels, for movement comp.
+
+    Parameters
+    ----------
+    raw : instance of mne.io.Raw
+        CTF recording with continuous head localisation enabled.
+    decim_hz : float | None
+        Rate to thin the position estimates down to before they are handed to
+        the Maxwell filter.  The SSS basis is rebuilt and re-regularised once
+        per distinct position, so the native ~19 Hz CTF rate makes movement
+        compensation roughly two orders of magnitude more expensive than the
+        rest of the filter.  Heads drift over tens of seconds, not tens of
+        milliseconds, so one update every few seconds captures essentially all
+        of the real motion.  ``None`` keeps every estimate.
+
+    Returns
+    -------
+    head_pos : array, shape (n_pos, 10) | None
+        In the format :func:`mne.preprocessing.maxwell_filter` expects, or
+        None when the recording has no HLC channels.
+    """
+    from mne.chpi import compute_head_pos, extract_chpi_locs_ctf
+
+    if not any(ch.startswith("HLC") for ch in raw.ch_names):
+        return None
+    chpi_locs = extract_chpi_locs_ctf(raw, verbose=verbose)
+    head_pos = compute_head_pos(raw.info, chpi_locs, verbose=verbose)
+    if decim_hz is not None and len(head_pos) > 1:
+        rate = 1.0 / np.median(np.diff(head_pos[:, 0]))
+        step = max(1, int(round(rate / float(decim_hz))))
+        if step > 1:
+            head_pos = head_pos[::step]
+    return head_pos
+
+
+def head_pos_summary(head_pos):
+    """Translation (mm) and rotation (deg) excursion of a `head_pos` array.
+
+    Both are measured against the median position of the recording, so these
+    describe how much the head moved *within* the block -- not how far it sat
+    from the movement-compensation destination.
+    """
+    from mne.chpi import head_pos_to_trans_rot_t
+
+    head_pos = np.asarray(head_pos, dtype=np.float64)
+    trans, rot, _ = head_pos_to_trans_rot_t(head_pos)
+    dist_mm = 1e3 * np.linalg.norm(trans - np.median(trans, axis=0), axis=1)
+    ref = rot[len(rot) // 2]
+    cos = (np.trace(ref.T @ rot, axis1=1, axis2=2) - 1.0) / 2.0
+    ang_deg = np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
+    return {
+        "n_positions": int(len(head_pos)),
+        "translation_mm_rms": float(np.sqrt(np.mean(dist_mm**2))),
+        "translation_mm_max": float(dist_mm.max()),
+        "rotation_deg_rms": float(np.sqrt(np.mean(ang_deg**2))),
+        "rotation_deg_max": float(ang_deg.max()),
+    }
+
+
+def maxwell_bad_channels(
+    raw,
+    origin,
+    coord_frame="head",
+    int_order=8,
+    ext_order=3,
+    ignore_ref=False,
+    tmax=120.0,
+    limit=7.0,
+    duration=5.0,
+    min_count=5,
+    verbose=False,
+):
+    """Noisy/flat sensors as seen by the SSS expansion.
+
+    Marking bad channels before Maxwell filtering is not optional: the
+    expansion is fitted to *all* sensors at once, so one dead or noisy sensor
+    left in is smeared over the whole array by the reconstruction.
+
+    `tmax` crops a copy of the recording first, because the detector Maxwell
+    filters every `duration`-second chunk it looks at and that cost is linear
+    in the length of the block.
+    """
+    from mne.preprocessing import find_bad_channels_maxwell
+
+    sub = raw.copy().crop(tmax=min(tmax, raw.times[-1])) if tmax else raw
+    noisy, flat = find_bad_channels_maxwell(
+        sub,
+        origin=origin,
+        coord_frame=coord_frame,
+        int_order=int_order,
+        ext_order=ext_order,
+        ignore_ref=ignore_ref,
+        limit=limit,
+        duration=duration,
+        min_count=min_count,
+        bad_condition="warning",
+        verbose=verbose,
+    )
+    return list(noisy), list(flat)
+
+
+def apply_tsss(
+    raw,
+    origin=None,
+    destination=MAXFILTER_ORIGIN,
+    coord_frame="head",
+    int_order=8,
+    ext_order=3,
+    st_duration=10.0,
+    st_correlation=0.98,
+    movement_compensation=True,
+    head_pos_decim_hz=0.2,
+    detect_bad_channels=True,
+    bad_channel_tmax=120.0,
+    ignore_ref=False,
+    regularize="in",
+    bad_condition="warning",
+    empty_room=False,
+    verbose=False,
+):
+    """tSSS with movement compensation for a CTF recording.
+
+    Wraps :func:`mne.preprocessing.maxwell_filter` with the pieces this dataset
+    needs: an origin that survives the missing head shape, a COLA-valid buffer
+    length for the 585.9375 Hz sampling rate, head positions read off the HLC
+    channels, and bad-channel detection beforehand.
+
+    Must be run on continuous raw data, before epoching: the temporal
+    projection needs long uninterrupted buffers, and movement compensation
+    needs the continuous head position.
+
+    Parameters
+    ----------
+    raw : instance of mne.io.Raw
+        Preloaded CTF recording.  Third-order gradient compensation may
+        already be applied -- MNE folds the compensation matrix into the SSS
+        basis as long as `ignore_ref` is False, which is why that is the
+        default here.
+    origin : array-like, shape (3,) | None
+        Expansion origin.  None asks :func:`maxwell_origin`, which fits the
+        head shape when there is one and falls back to `MAXFILTER_ORIGIN`.
+    destination : array-like, shape (3,) | str | None
+        Head position the data are re-rendered at.  Keeping this fixed across
+        runs and subjects is what makes a given sensor mean approximately the
+        same thing in a group sensor-level analysis; it buys comparability,
+        not anatomy.  None leaves every block at its own head position.
+    st_duration : float | None
+        Target tSSS buffer length in seconds, snapped to the nearest
+        COLA-valid value by :func:`cola_st_duration`.  None gives plain SSS.
+    movement_compensation : bool
+        Re-render each sample at `destination` using the measured head
+        position.  Silently falls back to off when there are no HLC channels.
+    empty_room : bool
+        Switch to device coordinates with no destination and no movement
+        compensation, for recordings with no head in the dewar.  Note that an
+        empty-room file filtered this way is *not* in the same SSS basis as
+        the task blocks; for a noise covariance to match, re-run it with
+        :func:`mne.preprocessing.maxwell_filter_prepare_emptyroom` against the
+        task block it is meant to go with.
+
+    Returns
+    -------
+    raw_sss : instance of mne.io.Raw
+        Maxwell-filtered copy.  Non-MEG channels (stim, EOG, HLC, ADC) pass
+        through untouched.
+    report : dict
+        What was actually applied, for logging next to the output file.
+    """
+    from mne.preprocessing import maxwell_filter
+
+    if empty_room:
+        coord_frame, destination, movement_compensation = "meg", None, False
+        origin = (0.0, 0.0, 0.0) if origin is None else origin
+    elif origin is None:
+        origin = maxwell_origin(raw.info, verbose=verbose)
+    origin = tuple(float(i) for i in origin)
+
+    if st_duration is not None:
+        st_duration = cola_st_duration(raw.info["sfreq"], target=st_duration)
+
+    head_pos = None
+    if movement_compensation:
+        head_pos = ctf_head_positions(raw, decim_hz=head_pos_decim_hz, verbose=verbose)
+
+    noisy, flat = [], []
+    if detect_bad_channels:
+        noisy, flat = maxwell_bad_channels(
+            raw,
+            origin=origin,
+            coord_frame=coord_frame,
+            int_order=int_order,
+            ext_order=ext_order,
+            ignore_ref=ignore_ref,
+            tmax=bad_channel_tmax,
+            verbose=verbose,
+        )
+        raw.info["bads"] = sorted(set(raw.info["bads"]) | set(noisy) | set(flat))
+
+    report = {
+        "origin": list(origin),
+        "coord_frame": coord_frame,
+        "destination": (
+            None
+            if destination is None
+            else [float(i) for i in np.ravel(destination)]
+        ),
+        "int_order": int(int_order),
+        "ext_order": int(ext_order),
+        "st_duration": None if st_duration is None else float(st_duration),
+        "st_correlation": float(st_correlation),
+        "compensation_grade": int(raw.compensation_grade or 0),
+        "ignore_ref": bool(ignore_ref),
+        "bads_noisy": list(noisy),
+        "bads_flat": list(flat),
+        "bads_applied": list(raw.info["bads"]),
+        "movement_compensation": head_pos is not None,
+    }
+    if head_pos is not None:
+        report["head_motion"] = head_pos_summary(head_pos)
+
+    raw_sss = maxwell_filter(
+        raw,
+        origin=origin,
+        coord_frame=coord_frame,
+        int_order=int_order,
+        ext_order=ext_order,
+        st_duration=st_duration,
+        st_correlation=st_correlation,
+        head_pos=head_pos,
+        destination=destination,
+        ignore_ref=ignore_ref,
+        regularize=regularize,
+        bad_condition=bad_condition,
+        verbose=verbose,
+    )
+    return raw_sss, report
+
 
 
 if __name__ == "__main__":

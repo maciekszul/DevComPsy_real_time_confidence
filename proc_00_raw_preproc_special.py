@@ -32,7 +32,8 @@ beh_path = dataset_path.joinpath("BEH")
 # specific file search and selection
 all_files = utils.get_directories(raw_path, depth="all")
 all_files = [i for i in all_files if "realtime" in i.parts[-1]]
-all_files = [i for i in all_files if not utils.many_is_in(exclude_sub, i.parts[-2])]
+# all_files = [i for i in all_files if not utils.many_is_in(exclude_sub, i.parts[-2])]
+all_files = [i for i in all_files if "sub-118" in i.name]
 
 # function that can also be accessed by importing this file
 def process_ds(ds, trigger_mapping, proc_path, block_type=0):
@@ -76,8 +77,7 @@ def process_ds(ds, trigger_mapping, proc_path, block_type=0):
 
         raw = raw.set_channel_types(set_ch)
         events = find_events(raw, "UDIO001", min_duration=0.003)
-
-        print(events)
+        events[:,2] = events[:,2] - 768
 
         if block_type == "empty_room" or block_type == "calibration":
             raw.save(raw_output)

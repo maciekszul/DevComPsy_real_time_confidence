@@ -7,7 +7,6 @@ poster_inout/
 output/
 # C extensions
 *.so
-*.ipynb
 
 # Distribution / packaging
 .Python
